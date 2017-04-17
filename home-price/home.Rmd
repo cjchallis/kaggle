@@ -37,18 +37,44 @@ test <- read.csv("test.csv")
 names(train)
 ```
 
+One thing I try to look for first is missing values in the data. There are methods that can ignore or replace missing values, but I like to understand why they are present and determine if there are any natural ways to handle these values.
 ```{r find_na}
 nas = apply(is.na(train), 2, sum)
 nas[nas > 0]
 ```
 
+There are a few different categories of missing values here:
+* Factors, in which `NA` can simply be another level of the factor. In the metadata many of the fields explicitly state that `NA` means 'None,' so it is most appropriate to include this as separate category.
+* Continuous attributes of a feature which not all homes have, such as a wood deck. In `WoodDeckSF` the square footage of the deck is given where a deck is present, the value is `NA` otherwise. I prefer to split this into two variables: a binary variable that indicates the presence of a wood deck, and a centered square footage variable. This separates the information into two features that models can evaluate - whether a wood deck exists, and how the deck compares to an average deck. This is especially helpful to linear models, but is also useful in interpreting the variables selected by any algorithm.
+* Groups of variables related to a feature which not all homes have. Here I create one indicator for the group, then treat the individual variables as described in the previous two bullets. In this dataset there are seven garage variables.
+
+
+I also want to check for zero values, as it looks like sometimes `0` is used when a variable does not apply.
+
+```{r find_na}
+zeroes = apply(!is.na(train) & train == 0, 2, sum)
+zeroes[zeroes > 0]
+```
+
+I originally wanted to collapse the 4 porch variables into two: a factor with the type of porch and a square footage variable, but it turns out that the types of porches are not mutually exclusive in the dataset.
+
 ```{r handle_na}
-factors = c("Alley", "Fence", "MiscFeature", "Electrical")
-notAlwaysApplicable = c("WoodDeckSF", "LotFrontage")
-varGroups = c("Bsmt", "Garage", "Fireplace", "Pool", "MasVnr")
-repVars = c("BsmtQual", "GarageQual", "FireplaceQu", "PoolQC", "MasVnrType")
-names(repVars) = varGroups
+factors = c("Alley", "Fence", "Electrical")
 porches = c("OpenPorchSF", "EnclosedPorch", "X3SsnPorch", "ScreenPorch")
+notAlwaysApplicable = c("WoodDeckSF", "LotFrontage", "X2ndFlrSF", porches)
+varGroups = c("Bsmt", "Garage", "Fireplace", "Pool", "MasVnr", "Misc")
+repVars = c("BsmtQual", "GarageQual", "FireplaceQu", "PoolQC", "MasVnrType", "MiscFeature")
+names(repVars) = varGroups
+
+
+type1_unf = !is.na(train$BsmtFinType1) & train$BsmtFinType1 == "Unf"
+train$BsmtFinSF1[type1_unf] = train$BsmtUnfSF[type1_unf]
+train$BsmtUnfSF[type1_unf] = 0
+
+type2_unf = train$BsmtFinType1 != "Unf" & !is.na(train$BsmtFinType2) & train$BsmtFinType2 == "Unf"
+train$BsmtFinSF2[type2_unf] = train$BsmtUnfSF[type2_unf]
+train$BsmtUnfSF[type2_unf] = 0
+
 
 for (f in factors){
   temp = as.character(train[[f]])
@@ -83,28 +109,37 @@ for (group in varGroups){
   }
 }
 
+for (porch in porches){
+  
+}
+
 nas = apply(is.na(train), 2, sum)
 nas[nas > 0]
+
+zeroes = apply(!is.na(train) & train == 0, 2, sum)
+zeroes[zeroes > 0]
 ```
 
+
+
 numericToFactor = c("MSSubClass", "MoSold")
-There are a few problem variables we need to take care of. First, `MSSubClass` should be a factor, but its levels are given as integers so it is read as a numeric variable.
+There are a few problem variables we need to take care of. First, `MSSubClass` should be a factor, but its levels are given as integers so it is read as a numeric variable. It is probably also more appropriate to treat `MoSold` (month sold) as a factor.
 ```{r MSSubClass}
 train$MSSubClass = as.factor(train$MSSubClass)
 test$MSSubClass = as.factor(test$MSSubClass)
+train$MoSold = as.factor(train$MoSold)
+test$MoSold = as.factor(test$MoSold)
+
 ```
 
-There are also a lot of "NA" values throughout the data set. For most of the variables, this means that the field is not applicable to the house, like basement square footage when there is no basement. So for the factor variables this should be a separate factor.
 
-
-
-In addition, many of the character variables have "NA" values. I assume that in this data set that means the variable does not apply, not that the value is missing. I prefer to treat "NA" has a separate factor level as a starting point for all variables.
+Let's take a look at the marginal distribution of sale price.
 
 ```{r histogram}
 plot(hist(train$SalePrice))
 ```
 
-Unsurprisingly, the sale price distribution looks log-normal. We also have the benefit of knowing that the competition is judged on root mean squared logarithmic error.
+Unsurprisingly, the sale price distribution looks log-normal. We also have the benefit of knowing that the competition is judged on root mean squared logarithmic error, so let's take the log and work with that.
 
 ```{r log_sale}
 train$LogSalePrice = log(train$SalePrice)
@@ -113,7 +148,7 @@ plot(hist(train$LogSalePrice))
 
 ### Train/Test Partitions
 
-This use the `caret` package.
+This uses the `caret` package.
 
 ```{r partition}
 partition <- createDataPartition(y=train$LogSalePrice,
@@ -125,7 +160,7 @@ testing <- train[-partition,]
 
 ### Linear Model
 
-A linear model can be a good part of data exploration.
+A linear model can be a good part of data exploration. It is possible in generating the train/test partitions that some variables are now singular in the training data.
 
 ```{r lm}
 singular = NULL
@@ -134,10 +169,13 @@ for (var in names(training)){
   if (length(freq[freq > 0]) < 2)
     singular = c(singular, var)
 }
+print(paste("Singular variables in the training partition:", singular, collapse = " "))
 training_no_singular = training %>% select(-one_of(singular))
-lm_model <- lm(LogSalePrice ~ ., data=training_no_singular)
+lm_model <- lm(LogSalePrice ~ . - SalePrice, data=training_no_singular)
 summary(lm_model)
 ```
+
+ALL STEPHANIE BELOW THIS POINT
 
 Lots of stuff we can drop right off, that's good. Some multicollinearity is making the model drop a few variables, but that's ok.
 
