@@ -23,7 +23,7 @@ library(dplyr)
 #library(pROC)
 #library(stringr)
 #library(dummies)
-#library(Metrics)
+library(Metrics)
 #library(kernlab)
 #library(mlbench)
 ```
@@ -98,19 +98,15 @@ for (group in varGroups){
   train[[indicator]] = as.numeric(applicable)
   for (v in vars){
     if (is.factor(train[[v]])){
-      temp = as.character(train[[v]])
-      temp[is.na(temp)] = "NA"
-      train[[v]] = factor(temp)
+      #temp = as.character(train[[v]])
+      #temp[is.na(temp)] = "NA"
+      #train[[v]] = factor(temp)
     } else {
       m = mean(train[[v]][applicable])
       train[[v]] = train[[v]] - m
       train[[v]][!applicable] = 0
     }
   }
-}
-
-for (porch in porches){
-  
 }
 
 nas = apply(is.na(train), 2, sum)
@@ -169,12 +165,50 @@ for (var in names(training)){
   if (length(freq[freq > 0]) < 2)
     singular = c(singular, var)
 }
-print(paste("Singular variables in the training partition:", singular, collapse = " "))
-training_no_singular = training %>% select(-one_of(singular))
-lm_model <- lm(LogSalePrice ~ . - SalePrice, data=training_no_singular)
+no_train = NULL
+for (var in names(training)){
+  if (is.factor(training[[var]])){
+    tr = table(training[[var]])
+    te = table(testing[[var]])
+    if (any(tr == 0 & te > 0))
+      no_train = c(no_train, var)
+  }
+}
+print(paste("Singular variables in the training partition:", paste(singular, collapse = " ")))
+print(paste("Factor variables with levels in test partition but not training:", paste(no_train, collapse = " ")))
+exclude = c(singular, no_train, "PoolQC", "MiscFeature")
+training_exclude = training
+if (length(exclude > 0))
+  training_exclude = training %>% select(-one_of(exclude))
+lm_model <- lm(LogSalePrice ~ . - SalePrice, data=training_exclude)
 summary(lm_model)
+
+# for (i in 1:length(names(training_exclude))){
+#   fart = data.frame(training_exclude[,1:i])
+#   fart$LogSalePrice = training_exclude$LogSalePrice
+#   lm(LogSalePrice ~ ., data=fart)
+# }
 ```
 
+```{r lm_rmse}
+prediction <- predict(lm_model, testing, type="response")
+
+rmse(testing$logSalePrice, prediction)
+```
+
+```{r var_sel}
+coef_table = summary(lm_model)$coefficients
+SIG_T = 3.5
+significant = summ[,1][abs(summ[,3]) > SIG_T]
+var_names = names(significant)
+print(var_names)
+
+vars = NULL
+for (var in names(train)){
+  if (length(grep(var, var_names)) > 0)
+    vars = c(vars, var)
+}
+```
 ALL STEPHANIE BELOW THIS POINT
 
 Lots of stuff we can drop right off, that's good. Some multicollinearity is making the model drop a few variables, but that's ok.
